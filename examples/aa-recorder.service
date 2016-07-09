@@ -1,0 +1,23 @@
+# Example systemd service file for aa-recorder.
+# Assumes the config file is located at /etc/aa-recorder.conf.json and a user
+# 'aa-recorder' exists on the system. Also assumes that npm installed the
+# script to /usr/bin.
+#
+# To use, copy to /etc/systemd/system. Run 'systemctl daemon-reload'.
+# Then 'systemctl enable aa-recorder.service'.
+# Start it: 'service aa-recorder start', then verify
+# 'service aa-recorder status' and that files are being written.
+
+[Unit]
+Description=aa-recorder IP camera recording service
+After=network.target
+Requires=network.target
+
+[Service]
+User=aa-recorder
+ExecStart=/usr/bin/aa-recorder /etc/aa-recorder.conf.json
+Type=simple
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -24,5 +24,10 @@ The configuration is a JSON file. See the examples directory.
 * `respawnDelay`: The amount of time, in milliseconds, to wait before retrying if the `respawnThreshold` is not exceeded. Default 60 seconds.
 * `fileType`: The file type to record to. Default `mp4`.
 
+# Run as a daemon
+No built-in facility is provided for running as a daemon; for my purposes it's
+easier to run as a systemd service. An example unit file with installation
+instructions is provided in the examples directory.
+
 # License
 MIT license. See LICENSE file.
