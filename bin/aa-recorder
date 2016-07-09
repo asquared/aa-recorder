@@ -7,6 +7,9 @@ const fs = require('fs');
 const filesizeParser = require('filesize-parser');
 const moment = require('moment');
 const path = require('path');
+const diskusage = require('diskusage');
+const filewalker = require('filewalker');
+const async = require('async');
 
 /* load configuration */
 fs.readFile(process.argv[2], 'utf8', function(err, data) {
@@ -54,14 +57,14 @@ function runApp(config) {
 	}
 
 	setInterval(function() {
-		cleanupFiles(storageDir, threshold);
+		cleanupFiles(storageDir, cleanupThreshold);
 	}, 60000);
 
 }
 
 /* check if there is enough free space; if not, remove some files */
 function cleanupFiles(storageDir, threshold) {
-	disk.check('storageDir', function(err, info) {
+	diskusage.check(storageDir, function(err, info) {
 		if (err) {
 			console.error(
 				"couldn't get free disk space for %s: %s",
@@ -70,8 +73,8 @@ function cleanupFiles(storageDir, threshold) {
 			return;
 		}
 
-		if (info.free < threshold) {
-			removeFiles(storageDir, threshold - info.free);
+		if (info.available < threshold) {
+			removeFiles(storageDir, threshold - info.available);
 		}
 	});
 }
@@ -79,7 +82,7 @@ function cleanupFiles(storageDir, threshold) {
 /* delete files from storageDir until we have removed up to bytesToRemove worth */
 function removeFiles(storageDir, bytesToRemove) {
 	var fileList = [];
-	filewalker(storageDir)
+	filewalker(storageDir, { maxPending: 32, maxAttempts: 0 })
 		.on('file', function(path, stat, abspath) {
 			fileList.push({
 				"path": abspath,
@@ -88,7 +91,7 @@ function removeFiles(storageDir, bytesToRemove) {
 			});
 		})
 		.on('error', function(err) {
-
+			console.log("error walking directory tree: %s", err);
 		})
 		.on('done', function() {
 			// sort the file list in ascending order of modification time
@@ -97,22 +100,29 @@ function removeFiles(storageDir, bytesToRemove) {
 			});
 
 			// go through until we reach the required number of bytes deleted
-			for (
-				var i = 0;
-				bytesToRemove > 0 && i < fileList.length;
-				i++
-			) {
-				var fn = fileList[i].path;
-				bytesToRemove -= fileList[i].size;
-				fs.unlink(fileList[i].path, function(err) {
+			// note: we want to delete the files asynchronously, but we still
+			// have to do so sequentially so we can skip over failures. Thus
+			// the async.reduce chain.
+			var rfn = function(bytesToRemove, fileInfo, callback) {
+				if (bytesToRemove < 0) {
+					setImmediate(callback, null, bytesToRemove);
+					return;
+				}
+				
+				console.log("deleting %s", fileInfo.path);
+				fs.unlink(fileInfo.path, function(err) {
 					if (err) {
-						console.error(
-							"failed to delete %s: %s",
-							fn, err
-						);
+						console.log("failed to delete %s", fileInfo.path);
+						callback(null, bytesToRemove);
+					} else {
+						callback(null, bytesToRemove - fileInfo.size);
 					}
 				});
-			}
+			};
+
+			// async has a bug, docs say the callback for reduce is optional but
+			// it's actually required.
+			async.reduce(fileList, bytesToRemove, rfn, function(err, result) {});
 		})
 		.walk();
 }
