@@ -199,12 +199,21 @@ Camera.prototype.buildFilename = function() {
 }
 
 Camera.prototype.buildFfmpegArgs = function() {
-	return [
-		'-max_delay', '5000000',
+	var url = this.buildUrl();
+	var args = [];
+
+	/* hack to force rtp over tcp */
+	if (url.substr(0, 4) == "rtsp") {
+		args.push('-rtsp_transport', 'tcp');
+	}
+
+	args.push(
 		'-i', this.buildUrl(),
 		'-vcodec', 'copy', '-an',
 		this.buildFilename()
-	];
+	);
+
+	return args;
 }
 
 Camera.prototype.childExited = function(code, signal) {
