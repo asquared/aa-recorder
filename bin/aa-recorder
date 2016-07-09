@@ -257,7 +257,9 @@ Camera.prototype.startChild = function() {
 	});
 
 	child.stderr.on('data', function(data) {
-		console.log("camera " + self.name + ": " + data);
+		if (data.toString('utf8').substr(0, 6) != "frame=") {
+			console.log("camera " + self.name + ": " + data);
+		}
 	});
 
 	this.childProcess = child;
