@@ -1,0 +1,16 @@
+{
+	"storageDir": "/srv/video-storage",
+	"cameras": [
+		{ 
+			"name": "axis-camera", 
+			"url": "rtsp://192.168.1.101/axis-media/media.amp",
+			"args": {
+				"videocodec": "h264",
+				"compression": "20",
+				"fps": "10",
+				"duration": "120",
+				"resolution": "1920x1080"
+			}
+		}
+	]
+}

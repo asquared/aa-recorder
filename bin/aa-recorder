@@ -1,0 +1,273 @@
+#!/usr/bin/env node
+/* aa-recorder v0.0.1 */
+
+const querystring = require('querystring');
+const child_process = require('child_process');
+const fs = require('fs');
+const filesizeParser = require('filesize-parser');
+const moment = require('moment');
+const path = require('path');
+
+/* load configuration */
+fs.readFile(process.argv[2], 'utf8', function(err, data) {
+	if (err) {
+		console.error("Failed to read config: " + err);
+		process.exit(1);
+	}
+
+	var config = JSON.parse(data);
+	runApp(config);
+});
+
+function runApp(config) {
+	var cameras = [];
+	var cameraConfigs = config['cameras'];
+	var cleanupThreshold = config['cleanupThreshold'];
+	var storageDir = config['storageDir'];
+
+	if (!cameraConfigs) {
+		console.error("No cameras defined, exiting");
+		process.exit(1);
+	}
+
+	if (!storageDir) {
+		console.error("No storage directory defined, exiting");
+		process.exit(1);
+	}
+
+	if (!cleanupThreshold) {
+		console.error("No cleanup threshold defined, using 10GB");
+		cleanupThreshold = "10GB";
+	}
+
+	try {
+		cleanupThreshold = filesizeParser(cleanupThreshold);
+	} catch (err) {
+		console.error("Didn't understand " + cleanupThreshold + ", using 10GB");
+		cleanupThreshold = 10 * 1024 * 1024 * 1024;
+	}
+
+	for (var i = 0; i < cameraConfigs.length; i++) {
+		var camera = new Camera(cameraConfigs[i]);
+		cameras.push(camera);
+		camera.startRecording(storageDir);
+	}
+
+	setInterval(function() {
+		cleanupFiles(storageDir, threshold);
+	}, 60000);
+
+}
+
+/* check if there is enough free space; if not, remove some files */
+function cleanupFiles(storageDir, threshold) {
+	disk.check('storageDir', function(err, info) {
+		if (err) {
+			console.error(
+				"couldn't get free disk space for %s: %s",
+				storageDir, err
+			);
+			return;
+		}
+
+		if (info.free < threshold) {
+			removeFiles(storageDir, threshold - info.free);
+		}
+	});
+}
+
+/* delete files from storageDir until we have removed up to bytesToRemove worth */
+function removeFiles(storageDir, bytesToRemove) {
+	var fileList = [];
+	filewalker(storageDir)
+		.on('file', function(path, stat, abspath) {
+			fileList.push({
+				"path": abspath,
+				"size": stat.size,
+				"mtime": stat.mtime.getTime()
+			});
+		})
+		.on('error', function(err) {
+
+		})
+		.on('done', function() {
+			// sort the file list in ascending order of modification time
+			fileList.sort(function(a, b) {
+				return a.mtime - b.mtime;
+			});
+
+			// go through until we reach the required number of bytes deleted
+			for (
+				var i = 0;
+				bytesToRemove > 0 && i < fileList.length;
+				i++
+			) {
+				var fn = fileList[i].path;
+				bytesToRemove -= fileList[i].size;
+				fs.unlink(fileList[i].path, function(err) {
+					if (err) {
+						console.error(
+							"failed to delete %s: %s",
+							fn, err
+						);
+					}
+				});
+			}
+		})
+		.walk();
+}
+
+/* Camera constructor and methods */
+function Camera(config) {
+	// Every camera must have a name.
+	if (!config.name) {
+		throw "no name defined";
+	}
+	this.name = config.name;
+
+	// Every camera must also have a URL to pass to ffmpeg.
+	if (!config.url) {
+		throw "no URL defined for camera " + this.name;
+	}
+	this.urlBase = config.url;
+
+	// Arguments to be added to the URL. May be undefined.
+	this.urlArgs = config.args;
+
+	// Some parameters used for supervision of the ffmpeg process.
+	// First, if the ffmpeg process exits too quickly this is a
+	// sign that something has gone wrong. respawnThreshold is
+	// the minimum runtime that we permit. (default 5 sec)
+	this.respawnThreshold = config.respawnThreshold;
+	if (!this.respawnThreshold) {
+		this.respawnThreshold = 5000;
+	}
+
+	// Second, the respawnDelay is the amount of time we wait before
+	// trying again if the respawnThreshold was not exceeded.
+	// (default 60 seconds)
+	this.respawnDelay = config.respawnDelay;
+	if (!this.respawnDelay) {
+		this.respawnDelay = 60000;
+	}
+
+	// The type of file to record to (default mp4)
+	this.fileType = config.fileType;
+	if (!this.fileType) {
+		this.fileType = 'mp4';
+	}
+
+	// Internal items used to track the ffmpeg process.
+	this.childProcess = null;
+	this.whenChildStarted = null;
+	this.stopRequested = false;
+}
+
+Camera.prototype.startRecording = function(storageDir) {
+	if (this.childProcess === null) {
+		this.storageDir = storageDir;
+		this.startChild();
+	}
+}
+
+Camera.prototype.stopRecording  = function() {
+	this.stopChild();
+}
+
+Camera.prototype.buildUrl = function() {
+	if (this.urlArgs) {
+		return this.urlBase + '?' + querystring.stringify(this.urlArgs);
+	} else {
+		return this.urlBase;
+	}
+}
+
+Camera.prototype.buildFilename = function() {
+	var dateString = moment().format("YYYYMMDD_HHmmss");
+	var basename = dateString + "_" + this.name + "." + this.fileType;
+	return path.join(this.storageDir, basename);
+}
+
+Camera.prototype.buildFfmpegArgs = function() {
+	return [
+		'-max_delay', '5000000',
+		'-i', this.buildUrl(),
+		'-vcodec', 'copy', '-an',
+		this.buildFilename()
+	];
+}
+
+Camera.prototype.childExited = function(code, signal) {
+	var self = this;
+
+	if (signal) {
+		console.error(
+			"camera %s: ffmpeg exited with signal %s",
+			this.name, signal
+		);
+	} else if (code != 0) {
+		console.error(
+			"camera %s: ffmpeg terminated abnormally (code %d)",
+			this.name, code
+		);
+	}
+
+	this.childProcess = null;
+	// respawn the child, unless the exit was requested
+	// also look at how long the process actually ran for so we don't
+	// spawn too many ffmpeg processes too quickly
+	if (!this.stopRequested) {
+		var runTime = null;
+		if (this.whenChildStarted) {
+			var now = new Date();
+			runTime = now.getTime() - this.whenChildStarted.getTime();
+		}
+
+		var go = function() { self.startChild(); }
+
+		if (runTime !== null && runTime < this.respawnThreshold) {
+			console.error(
+				"camera %s: child exited too quickly, waiting",
+				this.name
+			);
+			setTimeout(go, this.respawnDelay);
+		} else {
+			setImmediate(go);
+		}
+	} }
+
+Camera.prototype.startChild = function() {
+	/* spawn a ffmpeg child process and capture its output */
+	var self = this;
+	var args = this.buildFfmpegArgs();
+
+	console.log("camera %s: ffmpeg %s", this.name, args.join(' '));
+
+	var child = child_process.spawn(
+		'ffmpeg', args,
+		{ 'stdio': [ 'ignore', 'pipe', 'pipe' ] }
+	);
+
+	child.on('exit', function(code, signal) {
+		self.childExited(code, signal);
+	});
+
+	child.stdout.on('data', function(data) {
+		console.log("camera " + self.name + ": " + data);
+	});
+
+	child.stderr.on('data', function(data) {
+		console.log("camera " + self.name + ": " + data);
+	});
+
+	this.childProcess = child;
+	this.whenChildStarted = new Date();
+}
+
+Camera.prototype.stopChild = function() {
+	/* shut down the ffmpeg child process if we have one */
+	if (this.childProcess) {
+		this.stopRequested = true;
+		this.childProcess.kill('INT');
+	}
+}

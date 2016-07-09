@@ -1,0 +1,22 @@
+{
+	"name": "aa-recorder",
+	"version": "0.0.1",
+	"description": "no-frills way to record your IP cameras",
+	"author": {
+		"name": "Andrew Armenia",
+		"email": "andrew@asquaredlabs.com"
+	},
+	"license": "MIT",
+	"files": ["bin", "examples"],
+	"bin": { "aa-recorder" : "bin/aa-recorder" },
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/asquared/aa-recorder.git"
+	},
+	"dependencies": {
+		"filesize-parser": "~1.4.1",
+		"diskusage": "~0.1.5",
+		"filewalker": "git://github.com/oleics/node-filewalker.git",
+		"moment": "~2.14.1"
+	}
+}
