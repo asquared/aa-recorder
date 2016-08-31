@@ -205,6 +205,7 @@ Camera.prototype.buildFfmpegArgs = function() {
 	/* hack to force rtp over tcp */
 	if (url.substr(0, 4) == "rtsp") {
 		args.push('-rtsp_transport', 'tcp');
+		args.push('-stimeout', '10000000');
 	}
 
 	args.push(
