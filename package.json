@@ -16,7 +16,7 @@
 	"dependencies": {
 		"filesize-parser": "~1.4.1",
 		"diskusage": "~0.1.5",
-		"filewalker": "git://github.com/oleics/node-filewalker.git",
+		"filewalker": "https://github.com/oleics/node-filewalker.git",
 		"moment": "~2.14.1",
 		"async": "~1.5.2"
 	}
